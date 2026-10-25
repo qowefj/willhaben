@@ -1,0 +1,10 @@
+# secrets
+.env
+
+# scraped data, photos, state – local only
+data/
+dashboard.html
+
+__pycache__/
+*.pyc
+.claude/settings.local.json

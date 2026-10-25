@@ -1,0 +1,13 @@
+{
+    "name": "willhaben-full",
+    "version": "0.0.1",
+    "type": "module",
+    "private": true,
+    "dependencies": {
+        "apify": "^3.2.6",
+        "crawlee": "^3.11.5"
+    },
+    "scripts": {
+        "start": "node main.js"
+    }
+}

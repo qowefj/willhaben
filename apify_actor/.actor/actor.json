@@ -1,0 +1,7 @@
+{
+    "actorSpecification": 1,
+    "name": "willhaben-full",
+    "title": "Willhaben full listing + image scraper (private)",
+    "version": "0.0",
+    "dockerfile": "../Dockerfile"
+}
