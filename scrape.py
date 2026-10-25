@@ -12,7 +12,6 @@ import sys
 import urllib.parse
 
 import apify_api as api
-from PIL import Image
 from config import DATA, IMAGES, MAX_IMAGES_PER_AD, OWN_ACTOR_NAME, ROOT, SEARCH_URL
 
 PROXY_DC = {"useApifyProxy": True}
@@ -113,6 +112,7 @@ def cmd_retry(proxy=PROXY_RESI):
 
 def save_jpeg(blob, path):
     """Willhaben serves WebP; store real JPEGs so every vision API / viewer accepts them."""
+    from PIL import Image   # lazy: only photo downloads need Pillow (broken in some cloud images)
     try:
         img = Image.open(io.BytesIO(blob))
     except Exception:
