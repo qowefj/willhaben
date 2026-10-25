@@ -6,7 +6,8 @@ Only ads cheaper than the best deal found on 2026-10-25 for the same model + sto
   python monitor.py            # one check; prints JSON {"hits": [...], "stats": {...}}
   python monitor.py --baseline # mark everything currently listed as seen, report nothing
 
-State: data/monitor/seen.json  ({"wh": {id: price}, "bz": {id: price}}), hits log: data/monitor/hits.jsonl
+State: Apify key-value store "wh-monitor-state", record "seen" ({"wh": {id: price}, "bz": {id: price}}),
+mirrored to data/monitor/seen.json; hits log: data/monitor/hits.jsonl
 """
 import json
 import re
@@ -23,7 +24,8 @@ from scrape import PROXY_RESI, run_actor
 
 STATE = DATA / "monitor"
 STATE.mkdir(exist_ok=True)
-SEEN = STATE / "seen.json"
+SEEN = STATE / "seen.json"   # local copy; the source of truth is the Apify key-value store below
+STORE_NAME = "wh-monitor-state"
 
 # Best credible deal found on 2026-10-25 per (model, storage GB) – a hit must be strictly cheaper.
 BEST_TODAY = {
@@ -98,9 +100,35 @@ def check_bazos(seen, baseline, pages=2):
     return hits, n_new
 
 
+def _store():
+    """Named Apify key-value store: shared by the local task and the cloud routine (fresh checkout each run)."""
+    return api.call("POST", "/key-value-stores", params={"name": STORE_NAME})["data"]["id"]
+
+
+def load_state():
+    try:
+        return api.call("GET", f"/key-value-stores/{_store()}/records/seen")
+    except RuntimeError as e:      # 404 on first use -> fall back to the local file
+        if "404" not in str(e):
+            raise
+    return json.loads(SEEN.read_text(encoding="utf8")) if SEEN.exists() else {"wh": {}, "bz": {}}
+
+
+def save_state(state):
+    store = _store()
+    try:   # merge with whatever another runner saved meanwhile
+        remote = api.call("GET", f"/key-value-stores/{store}/records/seen")
+        for k in state:
+            state[k] = {**remote.get(k, {}), **state[k]}
+    except RuntimeError:
+        pass
+    api.call("PUT", f"/key-value-stores/{store}/records/seen", body=state)
+    SEEN.write_text(json.dumps(state), encoding="utf8")
+
+
 def main():
     baseline = "--baseline" in sys.argv
-    state = json.loads(SEEN.read_text(encoding="utf8")) if SEEN.exists() else {"wh": {}, "bz": {}}
+    state = load_state()
     if baseline:   # also treat everything from today's full scans as known
         for d in ("iphone", "iphone18"):
             f = DATA / d / "raw.json"
@@ -113,7 +141,7 @@ def main():
                 state["bz"].setdefault(x["id"], float(re.sub(r"\D", "", x["price_text"]) or 0))
     wh_hits, wh_new = check_willhaben(state["wh"], baseline)
     bz_hits, bz_new = check_bazos(state["bz"], baseline)
-    SEEN.write_text(json.dumps(state), encoding="utf8")
+    save_state(state)
     hits = wh_hits + bz_hits
     for h in hits:
         h["best_today"] = BEST_TODAY.get((h.get("model"), min(h.get("storage") or 0, 2048)))
