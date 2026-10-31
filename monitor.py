@@ -1,12 +1,12 @@
 """Watch for NEW (or newly price-cut) iPhone 17/18 Pro Max >= 512 GB deals.
 
-Sources: Willhaben (all of Austria, via the Apify actor, newest first) + Bazos.sk (Bratislava area, direct).
+Sources: Willhaben (all of Austria, via the fetcher on the docker host – host_service/, newest first) + Bazos.sk (Bratislava area, direct).
 Only ads cheaper than the best deal found on 2026-10-25 for the same model + storage are reported.
 
   python monitor.py            # one check; prints JSON {"hits": [...], "stats": {...}}
   python monitor.py --baseline # mark everything currently listed as seen, report nothing
 
-State: Apify key-value store "wh-monitor-state", record "seen" ({"wh": {id: price}, "bz": {id: price}}),
+State: record "wh-monitor-state" in the host service ({"wh": {id: price}, "bz": {id: price}}),
 mirrored to data/monitor/seen.json; hits log: data/monitor/hits.jsonl
 """
 import json
@@ -14,17 +14,16 @@ import re
 import sys
 import time
 
-import apify_api as api
 import bazos_analyze
 import bazos_scan
+import host_api
 import iphone_analyze
 from config import DATA
 from iphone_scan import MODELS
-from scrape import PROXY_RESI, run_actor
 
 STATE = DATA / "monitor"
 STATE.mkdir(exist_ok=True)
-SEEN = STATE / "seen.json"   # local copy; the source of truth is the Apify key-value store below
+SEEN = STATE / "seen.json"   # local copy; the source of truth is the host service state below
 STORE_NAME = "wh-monitor-state"
 
 # Best credible deal found on 2026-10-25 per (model, storage GB) – a hit must be strictly cheaper.
@@ -50,10 +49,8 @@ def check_willhaben(seen, baseline):
     hits, n_new = [], 0
     for model, (slug, _) in MODELS.items():
         url = f"https://www.willhaben.at/iad/kaufen-und-verkaufen/marktplatz/apple/{slug}?rows=90&sort=1"
-        run = run_actor({"mode": "list", "searchUrls": [url], "proxy": PROXY_RESI, "maxPages": 1,
-                         "pushSummaries": True, "skipIds": list(seen)},
-                        f"monitor-iphone{model}-pro-max-austria-new")
-        items = api.dataset_items(run["defaultDatasetId"])
+        items = host_api.crawl({"searchUrls": [url], "maxPages": 1, "pushSummaries": True, "skipIds": list(seen)},
+                               f"iphone{model}")
         details = {x["id"]: x for x in items if not x.get("summary")}
         for s in (x for x in items if x.get("summary")):
             price = float(s["price"]) if s.get("price") else None
@@ -100,29 +97,19 @@ def check_bazos(seen, baseline, pages=2):
     return hits, n_new
 
 
-def _store():
-    """Named Apify key-value store: shared by the local task and the cloud routine (fresh checkout each run)."""
-    return api.call("POST", "/key-value-stores", params={"name": STORE_NAME})["data"]["id"]
-
-
+# State lives in the host service: shared by local runs and the cloud routine (fresh checkout each run).
 def load_state():
-    try:
-        return api.call("GET", f"/key-value-stores/{_store()}/records/seen")
-    except RuntimeError as e:      # 404 on first use -> fall back to the local file
-        if "404" not in str(e):
-            raise
+    state = host_api.get_state(STORE_NAME)   # None on first use -> fall back to the local file
+    if state is not None:
+        return state
     return json.loads(SEEN.read_text(encoding="utf8")) if SEEN.exists() else {"wh": {}, "bz": {}}
 
 
 def save_state(state):
-    store = _store()
-    try:   # merge with whatever another runner saved meanwhile
-        remote = api.call("GET", f"/key-value-stores/{store}/records/seen")
-        for k in state:
-            state[k] = {**remote.get(k, {}), **state[k]}
-    except RuntimeError:
-        pass
-    api.call("PUT", f"/key-value-stores/{store}/records/seen", body=state)
+    remote = host_api.get_state(STORE_NAME) or {}   # merge with whatever another runner saved meanwhile
+    for k in state:
+        state[k] = {**remote.get(k, {}), **state[k]}
+    host_api.put_state(STORE_NAME, state)
     SEEN.write_text(json.dumps(state), encoding="utf8")
 
 

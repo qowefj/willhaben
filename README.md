@@ -22,3 +22,18 @@ python dashboard.py                     # dashboard.html
 - Веса критериев: `prescore.py` → `WEIGHTS`; рубрика для ИИ: `evaluate.py` → `RUBRIC`.
 - Время до офиса: пешком (по прямой × 1.3, 4.8 км/ч) и прямые линии без пересадок из расписания GTFS
   (ночные N-линии исключены; Badner Bahn в GTFS Wiener Linien нет).
+
+## Монитор iPhone без Apify: `host_service/`
+
+`monitor.py` и `iphone_scan.py` ходят не в Apify, а в контейнер `wh-host` на docker-хосте
+(192.168.10.241:3013, снаружи `https://wh.rp.concircle.com` через rp nginx). С IP хоста Willhaben
+отвечает обычным HTTPS без прокси. Там же лежит состояние монитора (`data/wh-monitor-state.json`).
+
+```bash
+host_service/deploy.sh                  # rsync + docker compose up -d --build; при первом запуске создаёт TOKEN в .env
+ssh docker cat willhaben-host/.env      # TOKEN -> переменная WH_HOST_TOKEN у рутины / в локальном .env
+# rp: host_service/nginx/willhaben-host -> /etc/nginx/sites-enabled/, затем nginx -t && systemctl reload nginx
+```
+
+Переменные клиента: `WH_HOST_TOKEN` (обязательно), `WH_HOST_URL` (по умолчанию `https://wh.rp.concircle.com`).
+Квартиры (`scrape.py`), `ps5_scan.py`, `bed_scan.py` по-прежнему используют Apify.

@@ -1,0 +1,11 @@
+# Runs on the docker host (192.168.10.241) in ~/willhaben-host, put there by deploy.sh.
+# TLS is terminated by the rp nginx (nginx/willhaben-host), so this serves plain HTTP.
+services:
+  wh-host:                    # wh.rp.concircle.com: Willhaben fetcher + monitor state for the cloud routine
+    build: .
+    image: wh-host:latest
+    container_name: wh-host
+    restart: unless-stopped
+    env_file: .env            # TOKEN
+    ports: ["192.168.10.241:3013:8080"]
+    volumes: ["./data:/data"] # monitor state (seen ads), survives rebuilds

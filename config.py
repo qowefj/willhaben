@@ -22,6 +22,9 @@ def _load_env():
 
 _load_env()
 APIFY_TOKEN = os.environ.get("APIFY_TOKEN", "")
+# Willhaben fetcher on the docker host (host_service/), used by the iPhone monitor instead of Apify.
+WH_HOST_URL = os.environ.get("WH_HOST_URL", "https://wh.rp.concircle.com")
+WH_HOST_TOKEN = os.environ.get("WH_HOST_TOKEN", "")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 VISION_MODEL = os.environ.get("VISION_MODEL", "claude-opus-5-5")
 

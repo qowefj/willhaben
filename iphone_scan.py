@@ -1,15 +1,14 @@
-"""iPhone Pro Max (>=512 GB) on Willhaben marketplace, all of Austria – collect via the same private actor.
+"""iPhone Pro Max (>=512 GB) on Willhaben marketplace, all of Austria – collect via the fetcher on the docker host.
 
-  python iphone_scan.py collect [--model 18] [--resi]   # search + detail pages -> data/<dir>/raw.json
+  python iphone_scan.py collect [--model 18]            # search + detail pages -> data/<dir>/raw.json
   python iphone_scan.py photos ID [ID..] [--model 18]   # photos of chosen ads -> data/<dir>/photos/<id>/NN.jpg
 """
 import json
 import sys
-import urllib.parse
 
-import apify_api as api
+import host_api
 from config import DATA
-from scrape import PROXY_DC, PROXY_RESI, run_actor, save_jpeg
+from scrape import save_jpeg
 
 # Willhaben's own model category (keyword search pulls in cases, laptops, other models).
 MODELS = {
@@ -28,39 +27,39 @@ def out_dir(model):
     return d
 
 
-def collect(model, proxy):
+def collect(model):
     url = f"https://www.willhaben.at/iad/kaufen-und-verkaufen/marktplatz/apple/{MODELS[model][0]}?rows=90&sort=1"
-    run = run_actor({"mode": "list", "searchUrls": [url], "proxy": proxy, "maxPages": 15},
-                    f"iphone{model}-pro-max-austria-list")
-    items = api.dataset_items(run["defaultDatasetId"])
-    log = api.run_log(run["id"])
-    print("\n".join(l for l in log.splitlines() if "Search page" in l or "FAILED" in l)[-3000:])
+    items = host_api.crawl({"searchUrls": [url], "maxPages": 15}, f"iphone{model}")
     (out_dir(model) / "raw.json").write_text(json.dumps(items, ensure_ascii=False), encoding="utf8")
     print(f"saved {len(items)} adverts -> {out_dir(model) / 'raw.json'}")
 
 
-def photos(model, ids, proxy):
+def photos(model, ids):
     out = out_dir(model)
-    raw = {x["id"]: x for x in json.loads((out / "raw.json").read_text(encoding="utf8"))}
-    jobs = [{"key": f"img-{i}-{n:02d}", "url": img.get("referenceImageUrl") or img.get("mainImageUrl")}
-            for i in ids
-            for n, img in enumerate((raw[i]["advertDetails"].get("advertImageList") or {}).get("advertImage") or [])]
-    run = run_actor({"mode": "images", "images": jobs, "proxy": proxy},
-                    f"iphone{model}-pro-max-photos")
-    for j in jobs:
-        _, i, n = j["key"].split("-")
+    raw_file = out / "raw.json"
+    raw = {x["id"]: x for x in json.loads(raw_file.read_text(encoding="utf8"))} if raw_file.exists() else {}
+    missing = [i for i in ids if i not in raw]   # e.g. a fresh checkout in the cloud routine
+    if missing:
+        urls = [f"https://www.willhaben.at/iad/object?adId={i}" for i in missing]
+        raw.update((x["id"], x) for x in host_api.crawl({"detailUrls": urls}, "photos"))
+    n_ok = 0
+    for i in ids:
+        if i not in raw:
+            print(f"  ad {i} not found, skipped")
+            continue
         (out / "photos" / i).mkdir(parents=True, exist_ok=True)
-        blob = api.call("GET", f"/key-value-stores/{run['defaultKeyValueStoreId']}/records/{urllib.parse.quote(j['key'])}", raw=True)
-        save_jpeg(blob, out / "photos" / i / f"{n}.jpg")
-    print(f"downloaded {len(jobs)} images -> {out / 'photos'}")
+        for n, img in enumerate((raw[i]["advertDetails"].get("advertImageList") or {}).get("advertImage") or []):
+            save_jpeg(host_api.image(img.get("referenceImageUrl") or img.get("mainImageUrl")),
+                      out / "photos" / i / f"{n:02d}.jpg")
+            n_ok += 1
+    print(f"downloaded {n_ok} images -> {out / 'photos'}")
 
 
 if __name__ == "__main__":
     args = sys.argv[1:] or ["collect"]
     model = model_arg(args)
-    proxy = PROXY_RESI if "--resi" in args else PROXY_DC
     if args[0] == "collect":
-        collect(model, proxy)
+        collect(model)
     elif args[0] == "photos":
         ids = [a for a in args[1:] if a.isdigit() and len(a) > 4]
-        photos(model, ids, PROXY_RESI)
+        photos(model, ids)

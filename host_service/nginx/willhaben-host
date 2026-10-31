@@ -1,0 +1,37 @@
+# /etc/nginx/sites-enabled/willhaben-host on the rp host, then: nginx -t && systemctl reload nginx
+# Willhaben fetcher for the Claude cloud routine (container wh-host on the docker host,
+# 192.168.10.241:3013, ~/willhaben-host, host_service/deploy.sh).
+# Public, because the routine runs in Anthropic's cloud; the app rejects requests without the bearer TOKEN.
+# Cert: the *.rp.concircle.com wildcard covers wh.rp.concircle.com.
+
+limit_req_zone $binary_remote_addr zone=wh_host:10m rate=5r/s;
+
+server {
+    server_name wh.rp.concircle.com;
+    listen 80;
+    return 301 https://wh.rp.concircle.com$request_uri;
+}
+
+server {
+    server_name wh.rp.concircle.com;
+    listen 443 ssl http2;
+
+    include snippets/ssl-letsencrypt-certs.conf;
+    include snippets/ssl-params.conf;
+
+    access_log /var/log/nginx/wh_access.log main;
+
+    client_max_body_size 2m;    # skipIds + the seen-state record
+
+    location / {
+        limit_req zone=wh_host burst=50 nodelay;
+        limit_req_status 429;
+        proxy_pass http://192.168.10.241:3013;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 300s;   # POST /list fetches up to ~90 detail pages
+    }
+}
